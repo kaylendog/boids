@@ -9,36 +9,19 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          # Linux
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-
-          # macOS Intel
-          - os: macos-15
-            target: x86_64-apple-darwin
-
-          # macOS Apple Silicon
-          - os: macos-15
-            target: aarch64-apple-darwin
-
-          # Windows
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-
-    runs-on: ${{ matrix.os }}
-
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libx11-dev
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu
 
       - name: Cache cargo
         uses: actions/cache@v5
@@ -47,28 +30,159 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target x86_64-unknown-linux-gnu
 
-      # ---------- Prepare binary ----------
-      - name: Prepare binary (Unix)
-        if: runner.os != 'Windows'
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boids-linux
+          path: target/x86_64-unknown-linux-gnu/release/boids
+
+  build-macos-intel:
+    name: Build macOS Intel
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-intel-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boids-macos-intel
+          path: target/x86_64-apple-darwin/release/boids
+
+  build-macos-arm:
+    name: Build macOS Apple Silicon
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-arm-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boids-macos-arm
+          path: target/aarch64-apple-darwin/release/boids
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            C:\Users\runner\.cargo\registry
+            C:\Users\runner\.cargo\git
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boids-windows
+          path: target\x86_64-pc-windows-msvc\release\boids.exe
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-macos-intel
+      - build-macos-arm
+      - build-windows
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: boids-linux
+          path: ./binaries
+
+      - name: Download macOS Intel binary
+        uses: actions/download-artifact@v4
+        with:
+          name: boids-macos-intel
+          path: ./binaries
+
+      - name: Download macOS ARM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: boids-macos-arm
+          path: ./binaries
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: boids-windows
+          path: ./binaries
+
+      - name: Rename and set executable
         run: |
-          mv target/${{ matrix.target }}/release/boids boids-${{ github.ref_name }}-${{ matrix.target }}
-          chmod +x boids-${{ github.ref_name }}-${{ matrix.target }}
+          # Linux
+          mv ./binaries/boids ./binaries/boids-${{ github.ref_name }}-x86_64-unknown-linux-gnu
+          chmod +x ./binaries/boids-${{ github.ref_name }}-x86_64-unknown-linux-gnu
 
-      - name: Prepare binary (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          move target\${{ matrix.target }}\release\boids.exe boids-${{ github.ref_name }}-${{ matrix.target }}.exe
+          # macOS Intel
+          mv ./binaries/boids ./binaries/boids-${{ github.ref_name }}-x86_64-apple-darwin
+          chmod +x ./binaries/boids-${{ github.ref_name }}-x86_64-apple-darwin
 
-      # ---------- Release ----------
+          # macOS ARM
+          mv ./binaries/boids ./binaries/boids-${{ github.ref_name }}-aarch64-apple-darwin
+          chmod +x ./binaries/boids-${{ github.ref_name }}-aarch64-apple-darwin
+
+          # Windows
+          mv ./binaries/boids.exe ./binaries/boids-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2.5.0
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: boids ${{ github.ref_name }}
-          files: |
-            boids-${{ github.ref_name }}-${{ matrix.target }}*
+          files: ./binaries/*
